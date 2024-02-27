@@ -1,0 +1,694 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bf-project-secret
+type: Opaque
+data:
+  password: d0JDZGF2eU5icEtYNGJmYWpUQlhOdDVLOGZqelZCc0M=
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bf-project-mysql-config
+  labels:
+    app: bf-project
+data:
+  my.cnf: |-
+    [client]
+    default-character-set=utf8mb4
+    [mysql]
+    default-character-set=utf8mb4
+    [mysqld]
+    character-set-server=utf8mb4
+    collation-server=utf8mb4_unicode_ci
+    datadir=/var/lib/mysql
+    max_connections=2000
+    sql_mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+    default-authentication-plugin=mysql_native_password
+    log-bin=/var/lib/mysql/mysql-bin
+    log-short-format
+    log-error=/var/log/mysql/error.log
+    general_log
+    general_log_file=/var/log/mysql/general.log
+    slow_query_log
+    long_query_time=2
+    slow_query_log_file=/var/log/mysql/slow.log
+    [mysqldump]
+    default-character-set=utf8mb4
+    quick
+    max_allowed_packet=512M
+    [myisamchk]
+    key_buffer_size=256M
+    sort_buffer_size=256M
+    read_buffer=2M
+    write_buffer=2M
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bf-project-nginx-config
+data:
+  nginx.conf: |
+    user                 root;
+    pid                  /run/nginx.pid;
+    worker_processes     auto;
+    worker_rlimit_nofile 65535;
+
+    # Load modules
+    include              /etc/nginx/modules-enabled/*.conf;
+
+    events {
+        multi_accept       on;
+        worker_connections 65535;
+    }
+
+    http {
+        charset                utf-8;
+        sendfile               on;
+        tcp_nopush             on;
+        tcp_nodelay            on;
+        server_tokens          off;
+        log_not_found          off;
+        types_hash_max_size    2048;
+        types_hash_bucket_size 64;
+        client_max_body_size   0;
+        keepalive_timeout      65;
+
+        # MIME
+        include                mime.types;
+        default_type           application/octet-stream;
+
+        # Logging
+        access_log             off;
+        error_log              /var/log/nginx/error.log warn;
+
+        # Load configs
+        include                /etc/nginx/conf.d/*.conf;
+
+        server {
+            listen                             80;
+            listen                             [::]:80;
+            server_name                        localhost;
+            root                               /usr/share/nginx/html/;
+
+            # security headers
+            add_header 'Access-Control-Allow-Origin' '*';
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
+            add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range';
+            add_header 'Access-Control-Allow-Credentials' 'true';
+
+            # . files
+            location ~ /\.(?!well-known) {
+                deny all;
+            }
+
+            # logging
+            access_log /var/log/nginx/access.log combined buffer=512k flush=1m;
+            error_log  /var/log/nginx/error.log warn;
+
+            # index.html fallback
+            location / {
+                index index.html index.htm;
+                try_files $uri $uri/ /index.html;
+            }
+
+            location @router {
+                rewrite ^(.*)$ /index.html last;
+            }
+            location ^~/api/ {
+                proxy_set_header Host $host;
+                proxy_set_header  X-Real-IP        $remote_addr;
+                proxy_set_header  X-Forwarded-For  $proxy_add_x_forwarded_for;
+                proxy_set_header X-NginX-Proxy true;
+                rewrite ^/api/(.*)$ /$1 break;
+                proxy_pass  http://bf-project-backend:8082;
+            }
+
+            # favicon.ico
+            location = /favicon.ico {
+                log_not_found off;
+            }
+
+            # robots.txt
+            location = /robots.txt {
+                log_not_found off;
+            }
+
+            # assets
+            location ~* \.(?:css(\.map)?|js(\.map)?)$ {
+                expires 1h;
+            }
+
+            # media
+            location ~* \.(?:jpe?g|png|gif|ico|cur|heic|webp|tiff?|mp3|m4a|aac|ogg|midi?|wav|mp4|mov|webm|mpe?g|avi|ogv|flv|wmv)$ {
+                expires 1d;
+            }
+
+            # svg, fonts
+            location ~* \.(?:svgz?|ttf|ttc|otf|eot|woff2?)$ {
+                add_header Access-Control-Allow-Origin "*";
+                expires    1d;
+            }
+
+            # gzip
+            gzip            on;
+            gzip_vary       on;
+            gzip_proxied    any;
+            gzip_comp_level 6;
+            gzip_types      text/plain text/css text/xml application/json application/javascript application/rss+xml application/atom+xml image/svg+xml;
+        }
+    }
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: bf-project-mysql-data-pv
+  labels:
+    app: bf-project-mysql-data
+spec:
+  capacity:
+    storage: 50Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: default
+  hostPath:
+    path: bf-project-mysql-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bf-project-mysql-data-pvc
+  labels:
+    app: bf-project-mysql-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  selector:
+    matchLabels:
+      app: bf-project-mysql-data
+
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: bf-project-redis-data
+  labels:
+    app: bf-project-redis-data
+spec:
+  capacity:
+    storage: 50Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: default
+  hostPath:
+    path: bf-project-redis-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bf-project-redis-data-pvc
+  labels:
+    app: bf-project-redis-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  selector:
+    matchLabels:
+      app: bf-project-redis-data
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: bf-project-minio
+  labels:
+    app: bf-project-minio
+spec:
+  capacity:
+    storage: 50Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: default
+  hostPath:
+    path: bf-project-minio
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bf-project-minio-pvc
+  labels:
+    app: bf-project-minio
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  selector:
+    matchLabels:
+      app: bf-project-minio
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bf-project-mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bf-project-mysql
+  template:
+    metadata:
+      labels:
+        app: bf-project-mysql
+    spec:
+      containers:
+      - name: bf-project-mysql
+        image: mysql:8.0
+        resources:
+          limits:
+            memory: "512Mi"
+            cpu: "512m"
+        ports:
+        - containerPort: 3306
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bf-project-secret
+              key: password
+        livenessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          exec:
+            command:
+            - mysqladmin
+            - ping
+            - -h
+            - 127.0.0.1
+        readinessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          exec:
+            command:
+            - mysqladmin
+            - ping
+            - -h
+            - 127.0.0.1
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+        - name: mysql-conf
+          mountPath: /etc/mysql/my.cnf
+      volumes:
+      - name: mysql-data
+        persistentVolumeClaim:
+          claimName: bf-project-mysql-data-pvc
+      - name: mysql-conf
+        configMap:
+          name: bf-project-mysql-config
+      restartPolicy: Always
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bf-project-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bf-project-redis
+  template:
+    metadata:
+      labels:
+        app: bf-project-redis
+    spec:
+      containers:
+      - name: bf-project-redis
+        image: redis:alpine
+        resources:
+          limits:
+            memory: "256Mi"
+            cpu: "256m"
+        ports:
+        - containerPort: 6379
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bf-project-secret
+              key: password
+        livenessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          exec:
+            command:
+            - redis-cli
+            - -a
+            - ${REDIS_PASSWORD}
+            - ping
+        readinessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          exec:
+            command:
+            - redis-cli
+            - -a
+            - ${REDIS_PASSWORD}
+            - ping
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        args: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: bf-project-redis-data-pvc
+      restartPolicy: Always
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bf-project-minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bf-project-minio
+  template:
+    metadata:
+      labels:
+        app: bf-project-minio
+    spec:
+      containers:
+      - name: bf-project-minio
+        image: minio/minio
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 9000
+        - containerPort: 9001
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        - name: MINIO_ROOT_USER
+          value: "minioadmin"
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bf-project-secret
+              key: password
+        livenessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          exec:
+            command:
+            - curl
+            - -f
+            - http://127.0.0.1:9000/minio/health/live
+        readinessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          exec:
+            command:
+            - curl
+            - -f
+            - http://127.0.0.1:9000/minio/health/live
+        volumeMounts:
+        - name: minio-data
+          mountPath: /data
+        args: ["server", "/data", "--console-address", ":9001"]
+      volumes:
+      - name: minio-data
+        persistentVolumeClaim:
+          claimName: bf-project-minio-pvc
+      restartPolicy: Always
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bf-project-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bf-project-backend
+  template:
+    metadata:
+      labels:
+        app: bf-project-backend
+    spec:
+      containers:
+      - name: bf-project-backend
+        image: reg.aidb.site/library/openjdk8-jre
+        resources:
+          limits:
+            memory: "1000Mi"
+            cpu: "1000m"
+        ports:
+        - containerPort: 8082
+        - containerPort: 8083
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        - name: DB_HOST
+          value: bf-project-mysql
+        - name: DB_PORT
+          value: "3306"
+        - name: DB_USER
+          value: root
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bf-project-secret
+              key: password
+        - name: REDIS_HOST
+          value: bf-project-redis
+        - name: REDIS_PORT
+          value: "6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bf-project-secret
+              key: password
+        - name: MINIO_HOST
+          value: bf-project-minio
+        - name: MINIO_PORT
+          value: "9000"
+        - name: MINIO_ACCESS_KEY
+          value: minioadmin
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: bf-project-secret
+              key: secret-key
+        livenessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          exec:
+            command:
+            - curl
+            - -f
+            - http://127.0.0.1:8082/actuator/health
+        readinessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          exec:
+            command:
+            - curl
+            - -f
+            - http://127.0.0.1:8082/actuator/health
+        args: 
+        - /usr//bin/sh
+        - -c
+        - java
+        - -jar
+        - -Duser.timezone=Asia/Shanghai
+        - -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=8083
+        - /app/application-webadmin-1.0.0.jar
+      restartPolicy: Always
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bf-project-frontend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: bf-project-frontend
+  template:
+    metadata:
+      labels:
+        app: bf-project-frontend
+    spec:
+      containers:
+      - name: bf-project-frontend
+        image: reg.aidb.site/library/nginx
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 80
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        livenessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          httpGet:
+            path: /
+            port: 80
+        readinessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          httpGet:
+            path: /
+            port: 80
+        volumeMounts:
+        - name: bf-project-frontend-config
+          mountPath: /etc/nginx/nginx.conf
+      volumes:
+      - name: bf-project-frontend-config
+        configMap:
+          name: bf-project-frontend-config
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bf-project-mysql
+spec:
+  selector:
+    app: bf-project-mysql
+  ports:
+  - name: mysql-port
+    port: 3306
+    targetPort: 3306
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bf-project-redis
+spec:
+  selector:
+    app: bf-project-redis
+  ports:
+  - name: redis-port
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bf-project-minio
+spec:
+  selector:
+    app: bf-project-minio
+  ports:
+  - name: minio-s3-port
+    port: 9000
+    targetPort: 9000
+    protocol: TCP
+  - name: minio-console-port
+    port: 9001
+    targetPort: 9001
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bf-project-backend
+spec:
+  selector:
+    app: bf-project-backend
+  ports:
+  - name: backend-port
+    port: 8082
+    targetPort: 8082
+    protocol: TCP
+  - name: backend-debug-port
+    port: 8083
+    targetPort: 8083
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bf-project-frontend
+spec:
+  selector:
+    app: bf-project-frontend
+  ports:
+  - name: frontend-port
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  type: LoadBalancer
