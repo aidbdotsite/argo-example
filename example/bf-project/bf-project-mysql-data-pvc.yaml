@@ -10,8 +10,7 @@ spec:
   resources:
     requests:
       storage: 50Gi
-  storageClassName: default
   selector:
     matchLabels:
-      app: bf-project-mysql-data
+      app: bf-project-mysql-data-pv
   
