@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bf-project-mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bf-project-mysql
+  template:
+    metadata:
+      labels:
+        app: bf-project-mysql
+    spec:
+      containers:
+      - name: bf-project-mysql
+        image: mysql:8.0
+        resources:
+          limits:
+            memory: "2048Mi"
+            cpu: "1000m"
+        ports:
+        - containerPort: 3306
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: bf-project-secret
+              key: password
+        livenessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          exec:
+            command:
+            - mysqladmin
+            - ping
+            - -h
+            - 127.0.0.1
+        readinessProbe:
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+          exec:
+            command:
+            - mysqladmin
+            - ping
+            - -h
+            - 127.0.0.1
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+        - name: mysql-conf
+          mountPath: /etc/mysql/my.cnf
+      volumes:
+      - name: mysql-data
+        persistentVolumeClaim:
+          claimName: bf-project-mysql-data-pvc
+      - name: mysql-conf
+        configMap:
+          name: bf-project-mysql-config
+      restartPolicy: Always

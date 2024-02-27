@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: bf-project-mysql-data-pv
+  labels:
+    app: bf-project-mysql
+spec:
+  capacity:
+    storage: 50Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: default
+  hostPath:
+    path: bf-project-mysql-data

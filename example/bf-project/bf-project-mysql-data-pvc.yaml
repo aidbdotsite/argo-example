@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bf-project-mysql-data-pvc
+  labels:
+    app: bf-project-mysql
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  selector:
+    matchLabels:
+      app: bf-project-mysql-data
